@@ -222,4 +222,8 @@ The order service logs at the bottom of each evidence file show all of these req
 
 ## REST vs gRPC
 
-With REST I had to define the request/response format myself and validate the JSON by hand on both services, but with gRPC the .proto file defined the types and generated the client and server code. For errors, REST meant picking HTTP codes and making up my own JSON error format, while gRPC already had status codes like NOT_FOUND and DEADLINE_EXCEEDED that fit. The REST timeout is just a setting on the requests call, but the gRPC deadline is sent along with the call so both sides know about it, and the client gets DEADLINE_EXCEEDED without any extra work. REST was easier to test since I could just use curl and read the JSON, while for gRPC I had to write a client script because the messages are binary. Overall REST was quicker to get started with, but gRPC was stricter about the contract and needed less custom code for errors and timeouts.
+With REST, I had to define the request and response formats myself and manually validate the JSON on both services. With gRPC, I just defined the types in the .proto file, and it generated the client and server code for me.
+Error handling was also easier with gRPC because it already had standard status codes like NOT_FOUND and DEADLINE_EXCEEDED. With REST, I had to choose HTTP status codes and create my own JSON error format.
+Timeouts were another difference. With REST, I had to configure the timeout on the client side. With gRPC, I could set a deadline that was passed along with the call, so the server also knew how much time was left.
+Testing was easier with REST because I could use curl and easily read the JSON responses. With gRPC, I had to write a small client script to test the calls because the messages were sent in binary format.
+Overall, REST was easier to get started with, but gRPC gave me a stricter contract and reduced the amount of custom code I needed for error handling and timeouts.
