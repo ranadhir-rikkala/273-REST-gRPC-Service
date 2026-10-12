@@ -1,0 +1,110 @@
+=== 1. Normal operation (inventory delay = 0s, client timeout = 2s) ===
+
+$ curl -s -w '\nHTTP %{http_code} in %{time_total}s\n' -X POST localhost:5050/orders -H 'Content-Type: application/json' -d '{"item_id": "apple", "quantity": 2}'
+{"item_id":"apple","order_id":"fb2cc815-f066-4b9c-932d-f332739d2ffd","quantity":2,"status":"CONFIRMED"}
+
+HTTP 201 in 0.005205s
+
+$ curl -s -w '\nHTTP %{http_code} in %{time_total}s\n' -X POST localhost:5050/orders -H 'Content-Type: application/json' -d '{"item_id": "banana", "quantity": 1}'
+{"error":"insufficient stock for 'banana'","in_stock":0,"item_id":"banana","requested":1}
+
+HTTP 409 in 0.002200s
+
+$ curl -s -w '\nHTTP %{http_code} in %{time_total}s\n' -X POST localhost:5050/orders -H 'Content-Type: application/json' -d '{"item_id": "unicorn", "quantity": 1}'
+{"error":"item 'unicorn' not found"}
+
+HTTP 404 in 0.001724s
+
+$ curl -s -w '\nHTTP %{http_code} in %{time_total}s\n' -X POST localhost:5050/orders -H 'Content-Type: application/json' -d '{"item_id": "apple"}'
+{"error":"item_id must be a string and quantity a positive integer"}
+
+HTTP 400 in 0.000571s
+
+=== 2. Slow inventory (delay = 5s > 2s timeout) ===
+
+$ curl -s -w '\nHTTP %{http_code} in %{time_total}s\n' -X POST localhost:5050/orders -H 'Content-Type: application/json' -d '{"item_id": "apple", "quantity": 2}'
+{"error":"inventory service timed out after 2.0s"}
+
+HTTP 504 in 2.005026s
+
+=== 3. Order Service still running after the timeout ===
+$ ps -p 58260 -o pid,command
+  PID COMMAND
+58260 /opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python rest_version/order_service.py
+
+$ curl -s -w '\nHTTP %{http_code}\n' localhost:5050/health
+{"status":"ok"}
+
+HTTP 200
+
+$ curl -s -w '\nHTTP %{http_code} in %{time_total}s\n' -X POST localhost:5050/orders -H 'Content-Type: application/json' -d '{"item_id": "laptop", "quantity": 1}'
+{"error":"inventory service timed out after 2.0s"}
+
+HTTP 504 in 2.005373s
+
+=== 4. Inventory restored (delay = 0s), same Order Service process ===
+
+$ curl -s -w '\nHTTP %{http_code} in %{time_total}s\n' -X POST localhost:5050/orders -H 'Content-Type: application/json' -d '{"item_id": "laptop", "quantity": 1}'
+{"item_id":"laptop","order_id":"7115c010-25c4-4cb8-aa6f-e95ffda4e125","quantity":1,"status":"CONFIRMED"}
+
+HTTP 201 in 0.002865s
+
+=== Order Service log ===
+2026-10-11 21:42:30,578 [order-rest] listening on :5050 -> inventory http://localhost:5051 (timeout=2.0s)
+ * Serving Flask app 'order_service'
+ * Debug mode: off
+2026-10-11 21:42:30,584 [order-rest] WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5050
+ * Running on http://10.0.0.19:5050
+2026-10-11 21:42:30,584 [order-rest] Press CTRL+C to quit
+2026-10-11 21:42:30,725 [order-rest] order fb2cc815-f066-4b9c-932d-f332739d2ffd created for item_id=apple quantity=2
+2026-10-11 21:42:30,725 [order-rest] 127.0.0.1 - - [11/Oct/2026 21:42:30] "POST /orders HTTP/1.1" 201 -
+2026-10-11 21:42:30,733 [order-rest] order rejected for item_id=banana: inventory returned 409
+2026-10-11 21:42:30,733 [order-rest] 127.0.0.1 - - [11/Oct/2026 21:42:30] "POST /orders HTTP/1.1" 409 -
+2026-10-11 21:42:30,740 [order-rest] order rejected for item_id=unicorn: inventory returned 404
+2026-10-11 21:42:30,740 [order-rest] 127.0.0.1 - - [11/Oct/2026 21:42:30] "POST /orders HTTP/1.1" 404 -
+2026-10-11 21:42:30,746 [order-rest] 127.0.0.1 - - [11/Oct/2026 21:42:30] "POST /orders HTTP/1.1" 400 -
+2026-10-11 21:42:32,873 [order-rest] inventory call timed out after 2.0s for item_id=apple
+2026-10-11 21:42:32,874 [order-rest] 127.0.0.1 - - [11/Oct/2026 21:42:32] "POST /orders HTTP/1.1" 504 -
+2026-10-11 21:42:32,898 [order-rest] 127.0.0.1 - - [11/Oct/2026 21:42:32] "GET /health HTTP/1.1" 200 -
+2026-10-11 21:42:34,911 [order-rest] inventory call timed out after 2.0s for item_id=laptop
+2026-10-11 21:42:34,912 [order-rest] 127.0.0.1 - - [11/Oct/2026 21:42:34] "POST /orders HTTP/1.1" 504 -
+2026-10-11 21:42:35,054 [order-rest] order 7115c010-25c4-4cb8-aa6f-e95ffda4e125 created for item_id=laptop quantity=1
+2026-10-11 21:42:35,054 [order-rest] 127.0.0.1 - - [11/Oct/2026 21:42:35] "POST /orders HTTP/1.1" 201 -
+
+=== Inventory Service log ===
+2026-10-11 21:42:30,667 [inventory-rest] listening on :5051 (delay=0.0s)
+ * Serving Flask app 'inventory_service'
+ * Debug mode: off
+2026-10-11 21:42:30,675 [inventory-rest] WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5051
+ * Running on http://10.0.0.19:5051
+2026-10-11 21:42:30,675 [inventory-rest] Press CTRL+C to quit
+2026-10-11 21:42:30,724 [inventory-rest] check item_id=apple quantity=2 -> 200 available
+2026-10-11 21:42:30,725 [inventory-rest] 127.0.0.1 - - [11/Oct/2026 21:42:30] "POST /inventory/check HTTP/1.1" 200 -
+2026-10-11 21:42:30,733 [inventory-rest] check item_id=banana quantity=1 -> 409 insufficient stock (0)
+2026-10-11 21:42:30,733 [inventory-rest] 127.0.0.1 - - [11/Oct/2026 21:42:30] "POST /inventory/check HTTP/1.1" 409 -
+2026-10-11 21:42:30,740 [inventory-rest] check item_id=unicorn quantity=1 -> 404 unknown item
+2026-10-11 21:42:30,740 [inventory-rest] 127.0.0.1 - - [11/Oct/2026 21:42:30] "POST /inventory/check HTTP/1.1" 404 -
+2026-10-11 21:42:30,816 [inventory-rest] listening on :5051 (delay=5.0s)
+ * Serving Flask app 'inventory_service'
+ * Debug mode: off
+2026-10-11 21:42:30,825 [inventory-rest] WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5051
+ * Running on http://10.0.0.19:5051
+2026-10-11 21:42:30,825 [inventory-rest] Press CTRL+C to quit
+2026-10-11 21:42:30,872 [inventory-rest] simulating slow response: sleeping 5.0s
+2026-10-11 21:42:32,910 [inventory-rest] simulating slow response: sleeping 5.0s
+2026-10-11 21:42:35,019 [inventory-rest] listening on :5051 (delay=0.0s)
+ * Serving Flask app 'inventory_service'
+ * Debug mode: off
+2026-10-11 21:42:35,024 [inventory-rest] WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5051
+ * Running on http://10.0.0.19:5051
+2026-10-11 21:42:35,024 [inventory-rest] Press CTRL+C to quit
+2026-10-11 21:42:35,054 [inventory-rest] check item_id=laptop quantity=1 -> 200 available
+2026-10-11 21:42:35,054 [inventory-rest] 127.0.0.1 - - [11/Oct/2026 21:42:35] "POST /inventory/check HTTP/1.1" 200 -

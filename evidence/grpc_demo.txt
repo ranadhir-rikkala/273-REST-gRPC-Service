@@ -1,0 +1,70 @@
+=== 1. Normal operation (inventory delay = 0s, deadline = 2s) ===
+
+$ python order_client.py apple 2
+-> PlaceOrder(item_id='apple', quantity=2)
+<- OK
+order_id: "47366206-56fc-43e0-b520-d450bc5c8fcc"
+item_id: "apple"
+quantity: 2
+status: "CONFIRMED"
+
+real 0.06
+
+$ python order_client.py banana 1
+-> PlaceOrder(item_id='banana', quantity=1)
+<- FAILED_PRECONDITION: insufficient stock for 'banana': requested 1, in stock 0
+real 0.05
+
+$ python order_client.py unicorn 1
+-> PlaceOrder(item_id='unicorn', quantity=1)
+<- NOT_FOUND: item 'unicorn' not found
+real 0.05
+
+=== 2. Slow inventory (delay = 5s > 2s deadline) ===
+
+$ python order_client.py apple 2
+-> PlaceOrder(item_id='apple', quantity=2)
+<- DEADLINE_EXCEEDED: inventory service exceeded 2.0s deadline
+real 2.08
+
+=== 3. Order Service still running after the deadline was exceeded ===
+$ ps -p 58404 -o pid,command
+  PID COMMAND
+58404 /opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python order_server.py
+
+$ python order_client.py laptop 1
+-> PlaceOrder(item_id='laptop', quantity=1)
+<- DEADLINE_EXCEEDED: inventory service exceeded 2.0s deadline
+real 2.09
+
+=== 4. Inventory restored (delay = 0s), same Order Service process ===
+
+$ python order_client.py laptop 1
+-> PlaceOrder(item_id='laptop', quantity=1)
+<- OK
+order_id: "474d1ac3-63b3-4e9c-ac7e-742ceeb8a158"
+item_id: "laptop"
+quantity: 1
+status: "CONFIRMED"
+
+real 0.06
+
+=== Order Service log ===
+2026-10-11 21:42:59,369 [order-grpc] listening on :50062 -> inventory localhost:50061 (deadline=2.0s)
+2026-10-11 21:42:59,605 [order-grpc] order 47366206-56fc-43e0-b520-d450bc5c8fcc created for item_id=apple quantity=2
+2026-10-11 21:42:59,668 [order-grpc] order rejected for item_id=banana: inventory returned FAILED_PRECONDITION
+2026-10-11 21:42:59,729 [order-grpc] order rejected for item_id=unicorn: inventory returned NOT_FOUND
+2026-10-11 21:43:01,918 [order-grpc] inventory call exceeded 2.0s deadline for item_id=apple
+2026-10-11 21:43:04,017 [order-grpc] inventory call exceeded 2.0s deadline for item_id=laptop
+2026-10-11 21:43:04,224 [order-grpc] order 474d1ac3-63b3-4e9c-ac7e-742ceeb8a158 created for item_id=laptop quantity=1
+
+=== Inventory Service log ===
+2026-10-11 21:42:59,478 [inventory-grpc] listening on :50061 (delay=0.0s)
+2026-10-11 21:42:59,605 [inventory-grpc] check item_id=apple quantity=2 -> OK
+2026-10-11 21:42:59,668 [inventory-grpc] check item_id=banana quantity=1 -> FAILED_PRECONDITION (0)
+2026-10-11 21:42:59,729 [inventory-grpc] check item_id=unicorn quantity=1 -> NOT_FOUND
+2026-10-11 21:42:59,791 [inventory-grpc] listening on :50061 (delay=5.0s)
+2026-10-11 21:42:59,914 [inventory-grpc] simulating slow response: sleeping 5.0s
+2026-10-11 21:43:02,013 [inventory-grpc] simulating slow response: sleeping 5.0s
+2026-10-11 21:43:04,112 [inventory-grpc] listening on :50061 (delay=0.0s)
+2026-10-11 21:43:04,224 [inventory-grpc] check item_id=laptop quantity=1 -> OK
